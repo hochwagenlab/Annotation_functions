@@ -1,0 +1,182 @@
+"""
+Sequence Extraction
+by Tovah
+(Based on Sunny's sequence extraction scripts)
+
+Inputs: genome fasta file, file with positions, query (optional), range (optional)
+Outputs: fasta file of specific regions
+Updated: 09/21/16
+Change: updated function to work with SK1 and S288C chromosome naming systems
+Updated: 10/7/16 to improve error messages and documentation
+"""
+
+##################################################################################
+# Modules
+
+from Bio import SeqIO
+from Bio.Alphabet import generic_dna
+import optparse
+import re
+import sys
+
+##################################################################################
+# Functions
+
+def seq_extract(fastaFile, inputFile, output, r_up, r_down, query):
+    # read in fasta sequence
+    genome = SeqIO.to_dict( SeqIO.parse( fastaFile, 'fasta' ) )
+
+    # run readBedGff
+    input = readBedGff(inputFile)
+
+    r_up = int(r_up)
+    r_down = int(r_down)
+    
+    # note chromosome number starts with 1 and python indexing starts with 0
+    # takes into account range
+        # if query, find query and extract sequence
+    if query is not "None":
+        queryInfo = [ i for i in input if query in i[3] ]
+        if not queryInfo:
+            print( "Query not found in " + inputFile + ". Try systematic name." )
+            sys.exit()
+        elif len(queryInfo) > 1:
+            print( "Multiple matches found for the query, proceeding with the \
+                   first match found." )
+            queryInfo=queryInfo[0]
+
+        # Now that query has been found, get FASTA sequence
+        if queryInfo[4] == '+':
+            start = queryInfo[1] - r_up-1
+            end = queryInfo[2] + r_down
+            sequence = str( genome[ queryInfo[0] ].seq[start:end] )
+        else:
+            start = queryInfo[2] + r_up
+            end = queryInfo[1] - r_down-1
+            sequence = genome[ queryInfo[0] ].seq[end:start]
+            sequence = str( sequence.reverse_complement() )
+        if "=" in queryInfo[3]:
+            name = ( re.search(r'ID=(.*);', queryInfo[3] ).group(1)
+                     + ',' + re.search('Name=(.*)', queryInfo[3] ).group(1) )
+        else:
+            name = input[i][3]
+        output_fasta = ( '>' + name + '\t' + genome[queryInfo[0]].id
+                + ':' + str(start) + '-' + str(end) + '('
+                + queryInfo[4] + ')' + '\n' + sequence )
+        # write output file
+        f = open( output, 'w' )
+        f.write(output_fasta)
+        f.close()
+        
+    # if no query extract for all features in input file
+    else:
+        output_fasta = [0] * len(input)
+        for i in range( len(input) ):
+            if input[i][4] == '+':
+                start = input[i][1] - r_up-1
+                end = input[i][2] + r_down
+                sequence = str( genome[input[i][0]].seq[start:end] )
+            else:
+                start = input[i][2] + r_up
+                end = input[i][1] - r_down-1
+                sequence = genome[ input[i][0] ].seq[end:start]
+                sequence = str( sequence.reverse_complement() )
+            if "=" in input[i][3]:
+                name = ( re.search(r'ID=(.*);', input[i][3] ).group(1)
+                    + ',' + re.search('Name=(.*)', input[i][3]).group(1) )
+            else:
+                name = input[i][3]
+            output_fasta[i] = ( '>' + name + '\t' + genome[ input[i][0] ].id
+                + ':' + str(start) + '-' + str(end) + '('
+                + input[i][4] + ')' + '\n' + sequence )
+        # write output file
+        f = open( output, 'w' )
+        f.write( '\n'.join( i for i in output_fasta ) )
+        f.close()
+ 
+def readBedGff(inputName):
+    # function to read in Gff or Bed files and convert into a universal format
+    # read in input file
+    f = open(inputName,'r')
+    input = f.readlines()
+    f.close()
+    
+    # split into a table
+    input = [ row.strip().split('\t') for row in input if not row.startswith("#") ]
+        
+    # determine type of input file and make four column table
+    # column 1: chr#, column 2: start, column 3: end, column 4: name, column 5: orientation
+    if len(input[0]) == 9:          # gff file
+        print( "Input file is a GFF" )
+        for i in range( len(input) ):
+            chr = input[i][0]
+            input[i] = [ chr, int(input[i][3]), int(input[i][4]), input[i][8], input[i][6] ]
+    elif len(input[0]) == 3:          # simplest bed file
+        print( "Input file is a 3-column BED" )
+        for i in range( len(input) ):
+            chr = input[i][0]
+            input[i] = [ chr, int(input[i][1]), int(input[i][2]), 'id'+i, '+']
+    elif len(input[0]) == 5:          # bed file made for summits
+        print( "Input file is a 5-column BED" )
+        for i in range( len(input) ):
+            chr =input[i][0]
+            input[i] = [ chr, int(input[i][1]), int(input[i][2]), input[i][3], '+']
+    else:
+        print (inputFile + " cannot be read. Make sure you are using a GFF file, a \
+        3 column BED file, or a 5 column BED file.")
+        sys.exit()
+    
+    return (input)
+
+################################################################################
+# Main
+
+# parse object for managing input options
+
+desc="""
+Purpose: to extract sequence(s) from a FASTA file based upon sequence coordinates
+given from a separate GFF or BED file.
+If no specific query is given, the output file will contain sequences for every
+row in the input file. This function will produce an output as long as the
+chromosome naming system is the same in both FASTA and input file. R_up and r_down
+expands the coordinates of the sequence to be extracted beyond those in the input
+file. Example:
+python FastaSeqExtract_biopython.py -f sk1_MvO_V1.fasta -i SK1_annotation_modified.gff
+-q "YIL072W" -o "YIL072W.fa"
+"""
+
+parser = optparse.OptionParser(description=desc)
+
+# essential data, defines commandline options
+parser.add_option ('-f', dest = 'fastaFile', default = '', help = "This input \
+is the name of the FASTA file of the entire genome.")
+parser.add_option ('-i', dest = 'inputFile', default = '', help = "This input \
+is the name of the file that contains positions of sequences to be extracted.")
+parser.add_option ('-u', dest = 'r_up', default = '0', help = "This input \
+is the length of sequence to be extracted upstream of the designated feature. \
+Default = 0bp")
+parser.add_option ('-d', dest = 'r_down', default = '0', help = "This input \
+is the length of sequence to be extracted downstream of the designated feature. \
+Default = 0bp")
+parser.add_option ('-q', dest = 'query', default = 'None', help = "This input \
+is the name of a specific query to search for. This includes: GeneID, Gene Name, \
+and summit name. This is case-sensitive. Default: entire input file")
+parser.add_option ('-o', dest = 'output', default = '', help = "This input \
+is the name of the newly created output FASTA file.")
+
+# load the inputs
+(options,args) = parser.parse_args()
+
+# reads the inputs from commandline
+fastaFile = options.fastaFile
+inputFile = options.inputFile
+r_up = options.r_up
+r_down = options.r_down
+query = options.query
+output = options.output
+
+a = seq_extract(fastaFile, inputFile, output, r_up, r_down, query)
+
+
+#fastaFile="sk1_MvO_V1.fasta"
+#inputFile="RPLS.gff"
