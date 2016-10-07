@@ -20,10 +20,9 @@ import sys
 ##################################################################################
 # Functions
 
-def seq_extract(fastaFile, inputFile, output, r_up, r_down, query):
+def main(fastaFile, inputFile, output, r_up, r_down, query):
     # read in fasta sequence
     genome = load_FASTA(fastaFile)
-
     # run readBedGff
     input = readBedGff(inputFile)
 
@@ -32,81 +31,60 @@ def seq_extract(fastaFile, inputFile, output, r_up, r_down, query):
     
     # note chromosome number starts with 1 and python indexing starts with 0
     # takes into account range
-        # if query, find query and extract sequence
+    # if query, find query within input file
     if query is not "None":
         queryInfo= [ i for i in input if query in i[3] ]
         if not queryInfo:
             print( "Query not found in " + inputFile + ". Try systematic name." )
             sys.exit()
-        elif len(queryInfo) > 1:
-            print( "Multiple matches found for the query, proceeding with the \
-                   first match found." )
-            queryInfo=queryInfo[0]
-
-            # Now that query has been found, get FASTA sequence
-        if queryInfo[4] == '+':
-            start = queryInfo[1]-r_up-1
-            if start < 0:
-                start = 0
-                print( "Clipped upstream of gene." )
-            end = queryInfo[2]+r_down
-            chr = genome[ queryInfo[0]-1 ][1]
-            if end > len(chr):
-                end = len(chr)
-                print( "Clipped downstream of gene." )
-            sequence = chr[start:end]
-        else:
-            chr = genome[ queryInfo[0]-1 ][1]
-            start = queryInfo[2] + r_up
-            if start > len(chr):
-                start = len(chr)
-                print( "Clipped upstream of gene." )
-            end = queryInfo[1] - r_down-1
-            if end < 0:
-                end = 0
-                print( "Clipped downstream of gene." )
-            sequence = chr[end:start]
-            sequence =  reverse_complement(sequence)
-        if "=" in queryInfo[3]:
-            name = ( re.search(r'ID=(.*);', queryInfo[3] ).group(1) + ','
-                     + re.search('Name=(.*)', queryInfo[3] ).group(1) )
-        else:
-            name = input[i][3]
-        output_fasta = ( '>' + name + '\t' + genome[ queryInfo[0] - 1 ][0]
-            + ':' + str(start) + '-' + str(end) + '(' + queryInfo[4]
-            + ')' + '\n' + sequence )
-        # write output file
-        f = open( output, 'w' )
-        f.write(output_fasta)
-        f.close()
-        
-    # if no query extract for all features in input file
     else:
-        print( "If any FASTA does not include sequence, range extends \
-        beyond the length of the chromosome." )
-        output_fasta = [0] * len(input)
-        for i in range( len(input) ):
-            if input[i][4] == '+':
-                start = input[i][1] - r_up-1
-                end = input[i][2] + r_down
-                sequence = genome[ input[i][0]-1 ][1][start:end]
-            else:
-                start = input[i][2]+r_up
-                end = input[i][1]-r_down-1
-                sequence = genome[input[i][0]-1 ][1][end:start]
-                sequence = reverse_complement(sequence)
-            if "=" in input[i][3]:
-                name = ( re.search(r'ID=(.*);', input[i][3] ).group(1)
-                    + ',' + re.search('Name=(.*)', input[i][3]).group(1) )
-            else:
-                name = input[i][3]
-            output_fasta[i] = ('>' + name + '\t' + genome[ queryInfo[0]-1 ][0]
-                + ':' + str(start) + '-' + str(end) + '(' + input[i][4]
-                + ')' + '\n' + sequence )
-        # write output file
-        f = open( output, 'w' )
-        f.write('\n'.join(i for i in output_fasta))
-        f.close()
+        queryInfo = input
+
+    # extract sequences and write output FASTA file
+    output_fasta = [0] * len(queryInfo)
+    for i in range( len(queryInfo) ):
+        output_fasta[i] = seq_extract( queryInfo[i], genome, r_up, r_down )
+    # write output file
+    f = open( output, 'w' )
+    f.write( '\n'.join( i for i in output_fasta ) )
+    f.close()
+
+
+def seq_extract( row, fasta, r_up, r_down ):
+    # take "row from readBedGff file and extract sequence
+    # put into FASTA format
+    chrNum = [ chrN for chrN in range(len(fasta)) if fasta[chrN][0] == row[0] ][0]
+    if row[4] == '+':
+        start = row[1] - r_up - 1
+        if start < 0:
+            start = 0
+            print( "Clipped upstream of " + row[3] )
+        end = row[2] + r_down
+        if end > len(fasta[chrNum][1]):
+            end = len(fasta[chrNum][1])
+            print( "Clipped downstream of " + row[3] )
+        sequence = fasta[chrNum][1][start:end]
+    else:
+        chr = fasta[ row[0]-1 ][1]
+        start = row[2] + r_up
+        if start > len(fasta[chrNum][1]):
+            start = len(fasta[chrNum][1])
+            print( "Clipped upstream of " + row[3] )
+        end = row[1] - r_down - 1
+        if end < 0:
+            end = 0
+            print( "Clipped downstream of " + row[3] )
+        sequence = fasta[chrNum][1][end:start]
+        sequence =  reverse_complement(sequence)
+    if "=" in row[3]:
+        name = ( re.search(r'ID=(.*);', row[3] ).group(1) + ','
+                 + re.search('Name=(.*)', row[3] ).group(1) )
+    else:
+        name = row[3]
+    out_fasta = ( '>' + name + '\t' + fasta[chrNum][0]
+            + ':' + str(start) + '-' + str(end) + '(' + row[4]
+            + ')' + '\n' + sequence )
+    return out_fasta
 
 def reverse_complement(seq):
         Complement = { 'A':'T', 'C':'G', 'T':'A', 'G':'C', 'N':'N' }
@@ -211,7 +189,7 @@ r_down = options.r_down
 query = options.query
 output = options.output
 
-a = seq_extract(fastaFile, inputFile, output, r_up, r_down, query)
+a = main(fastaFile, inputFile, output, r_up, r_down, query)
 
 
 #fastaFile="sk1_MvO_V1.fasta"
